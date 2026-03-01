@@ -1,129 +1,71 @@
 # Hardware del Proyecto
-
 🔧 Hardware del Proyecto – Chaleco Inteligente
+Descripción
 
-Descripción General
+Esta sección documenta la arquitectura electrónica y física del sistema, incluyendo selección de componentes, diseño energético e integración de sensores.
 
-Esta sección documenta la arquitectura física y electrónica del sistema, incluyendo la selección de componentes, diseño energético, integración de sensores y estructura mecánica del chaleco inteligente.
-
-El hardware fue diseñado considerando:
+El hardware fue diseñado bajo criterios de:
 
 Bajo consumo energético
 
 Peso reducido
 
-Portabilidad
+Integración modular
 
 Estabilidad eléctrica
 
-Integración modular
-
 🏗 Arquitectura del Sistema
 
-El sistema está compuesto por los siguientes subsistemas:
-
-🔹 1. Unidad de Procesamiento
+Unidad de procesamiento
 
 ESP32-WROOM-32E
 
-Control general del sistema
+Sensores fisiológicos
 
-Gestión de comunicación I2C y UART
+MAX30102 (Frecuencia cardiaca y SpO₂)
 
-Procesamiento de datos fisiológicos y biomecánicos
-
-🔹 2. Sensores Fisiológicos
-
-MAX30102 – Frecuencia cardiaca y SpO₂
-
-Medición óptica por fotopletismografía
-
-Integración vía I2C
-
-🔹 3. Sensores de Movimiento
+Sensores de movimiento
 
 BNO055 (IMU 9 ejes)
 
-Acelerómetro
+Sensores ambientales
 
-Giroscopio
+BMP280 (Presión y temperatura)
 
-Magnetómetro
-
-Cálculo de orientación absoluta
-
-🔹 4. Sensores Ambientales
-
-BMP280
-
-Presión barométrica
-
-Temperatura
-
-Estimación indirecta de altitud
-
-🔹 5. Geolocalización
+Geolocalización
 
 GPS NEO-6MV2
 
-Posición
-
-Velocidad
-
-Tiempo UTC
-
-🔹 6. Comunicación
+Comunicación
 
 SIM800L (GSM/GPRS)
 
-Transmisión remota de datos
+Sistema de alimentación
 
-Envío de alertas (si aplica)
+Batería Li-ion 18650 (3000mAh)
 
-🔹 7. Sistema de Alimentación
+TP4056 (carga)
 
-Batería Li-ion 18650 (3.7V – 3000mAh)
-
-TP4056 (módulo de carga)
-
-MT3608 (convertidor Step-Up)
-
-Diseñado para garantizar estabilidad ante picos de consumo, especialmente en transmisión GSM.
+MT3608 (Step-Up)
 
 📂 Contenido de esta Carpeta
 
-📄 Datasheets oficiales de cada componente.
+Datasheets oficiales
 
-Archivos de diseño electrónico (esquemáticos y PCB).
+Esquemáticos y diseño PCB
 
-Modelos mecánicos (STL / CAD).
+Modelos mecánicos (STL / CAD)
 
- Diagramas de arquitectura física.
+Diagramas de arquitectura
 
-🔌 Diagrama de conexiones del sistema.
+Diagrama de conexiones
 
- Consideraciones de Diseño
+⚡ Enfoque de Diseño
 
-Durante el desarrollo del hardware se priorizó:
+Integración progresiva por módulos
 
-Minimizar interferencias eléctricas.
+Validación individual antes de integración total
 
-Reducir peso total del sistema.
+Control de consumo energético
 
-Optimizar distribución de sensores en el chaleco.
-
-Garantizar estabilidad de alimentación.
-
-Facilitar mantenimiento y reemplazo modular.
-
-🧪 Estado Actual del Hardware
-
-Actualmente el sistema se encuentra en fase de:
-
-Integración progresiva de módulos.
-
-Pruebas unitarias por sensor.
-
-Validación de consumo energético.
-
-Optimización de estabilidad eléctrica.
+Optimización de estabilidad eléctrica
