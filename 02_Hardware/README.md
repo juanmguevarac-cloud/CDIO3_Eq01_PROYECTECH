@@ -1,6 +1,7 @@
 # Hardware del Proyecto
 
 🔧 Hardware del Proyecto – Chaleco Inteligente
+
 Descripción General
 
 Esta sección documenta la arquitectura física y electrónica del sistema, incluyendo la selección de componentes, diseño energético, integración de sensores y estructura mecánica del chaleco inteligente.
