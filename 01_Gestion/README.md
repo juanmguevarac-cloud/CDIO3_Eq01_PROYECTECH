@@ -25,3 +25,13 @@ BOM (Bill of Materials): Componentes, costos, consumo y peso.
 Cronograma: Planificación por fases e hitos del proyecto.
 
 Planeación general: Problema, alcance y propuesta de solución.
+
+⚙️ Enfoque de Trabajo
+
+Integración progresiva de módulos.
+
+Pruebas unitarias antes de integración total.
+
+Control de consumo energético.
+
+Documentación continua de resultados.
