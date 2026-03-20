@@ -1,0 +1,504 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <TinyGPS.h>
+#include <ArduinoJson.h>
+#include <math.h>
+
+TinyGPS gps;
+
+// GPS en Serial2
+static const int GPS_RX = 16;
+static const int GPS_TX = 17;
+
+// WiFi
+const char* ssid = "Martin";
+const char* password = "1054857362";
+
+// Tiempos
+unsigned long sessionDurationMs = 0;
+unsigned long sessionStart = 0;
+unsigned long lastPrint = 0;
+unsigned long lastGeoQuery = 0;
+
+// Estado sesión
+bool waitingForDuration = true;
+bool sessionStarted = false;
+bool sessionFinished = false;
+
+// Ubicación traducida
+String ciudad = "No disponible";
+String departamento = "No disponible";
+String pais = "No disponible";
+
+// Control de consulta
+const unsigned long GEO_INTERVAL_MS = 30000;
+
+// Variables para resumen
+int muestrasValidas = 0;
+int muestrasVelocidad = 0;
+float sumaVelocidad = 0.0;
+float velocidadMax = 0.0;
+
+int muestrasAltitud = 0;
+float sumaAltitud = 0.0;
+float altitudMin = 999999.0;
+float altitudMax = -999999.0;
+
+float sumaHDOP = 0.0;
+int muestrasHDOP = 0;
+
+int sumaSatelites = 0;
+int muestrasSatelites = 0;
+
+float distanciaTotalKm = 0.0;
+bool tienePuntoPrevio = false;
+float prevLat = 0.0;
+float prevLon = 0.0;
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  Serial2.begin(9600, SERIAL_8N1, GPS_RX, GPS_TX);
+
+  Serial.println();
+  Serial.println("=== ESP32 + NEO-6M + WiFi + Sesion Deportiva ===");
+  Serial.println("Conectando a WiFi...");
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println();
+  Serial.println("WiFi conectado");
+  Serial.print("IP: ");
+  Serial.println(WiFi.localIP());
+  Serial.println();
+
+  pedirDuracionSesion();
+}
+
+void loop() {
+  while (Serial2.available()) {
+    char c = Serial2.read();
+    gps.encode(c);
+  }
+
+  if (waitingForDuration) {
+    leerDuracionDesdeSerial();
+    return;
+  }
+
+  if (!sessionStarted || sessionFinished) {
+    return;
+  }
+
+  unsigned long now = millis();
+
+  if (now - lastPrint >= 1000) {
+    lastPrint = now;
+    mostrarDatosGPS();
+    acumularResumen();
+  }
+
+  if (now - lastGeoQuery >= GEO_INTERVAL_MS) {
+    float lat, lon;
+    unsigned long age;
+    gps.f_get_position(&lat, &lon, &age);
+
+    bool posicionValida =
+      (lat != TinyGPS::GPS_INVALID_F_ANGLE) &&
+      (lon != TinyGPS::GPS_INVALID_F_ANGLE) &&
+      (age != TinyGPS::GPS_INVALID_AGE);
+
+    if (posicionValida && WiFi.status() == WL_CONNECTED) {
+      obtenerUbicacion(lat, lon);
+      lastGeoQuery = now;
+    }
+  }
+
+  if (now - sessionStart >= sessionDurationMs) {
+    sessionFinished = true;
+    Serial.println();
+    Serial.println("===== SESION FINALIZADA =====");
+    mostrarResumenFinal();
+    Serial.println();
+    Serial.println("Si deseas iniciar una nueva sesion, reinicia la ESP32.");
+  }
+}
+
+void pedirDuracionSesion() {
+  Serial.println("Ingresa la duracion de la sesion en minutos y presiona Enter:");
+  Serial.println("Ejemplo: 30");
+  Serial.println();
+}
+
+void leerDuracionDesdeSerial() {
+  if (Serial.available() > 0) {
+    String entrada = Serial.readStringUntil('\n');
+    entrada.trim();
+
+    if (entrada.length() == 0) {
+      return;
+    }
+
+    int minutos = entrada.toInt();
+
+    if (minutos <= 0) {
+      Serial.println("Valor no valido. Ingresa un numero entero mayor que 0.");
+      Serial.println("Ejemplo: 30");
+      Serial.println();
+      return;
+    }
+
+    sessionDurationMs = (unsigned long)minutos * 60UL * 1000UL;
+    waitingForDuration = false;
+    sessionStarted = true;
+    sessionFinished = false;
+    sessionStart = millis();
+
+    Serial.print("Sesion iniciada por ");
+    Serial.print(minutos);
+    Serial.println(" minuto(s).");
+    Serial.println();
+  }
+}
+
+void mostrarDatosGPS() {
+  float lat, lon;
+  unsigned long age;
+  gps.f_get_position(&lat, &lon, &age);
+
+  int sats = gps.satellites();
+  int hdopRaw = gps.hdop();
+  float alt = gps.f_altitude();
+  float speed = gps.f_speed_kmph();
+  float course = gps.f_course();
+
+  int year;
+  byte month, day, hour, minute, second, hundredths;
+  unsigned long fix_age;
+  gps.crack_datetime(&year, &month, &day, &hour, &minute, &second, &hundredths, &fix_age);
+
+  Serial.println("===== DATOS GPS =====");
+
+  Serial.print("Latitud: ");
+  if (lat == TinyGPS::GPS_INVALID_F_ANGLE) Serial.println("NO DISPONIBLE");
+  else Serial.println(lat, 6);
+
+  Serial.print("Longitud: ");
+  if (lon == TinyGPS::GPS_INVALID_F_ANGLE) Serial.println("NO DISPONIBLE");
+  else Serial.println(lon, 6);
+
+  Serial.print("Satelites: ");
+  if (sats == TinyGPS::GPS_INVALID_SATELLITES) Serial.println("NO DISPONIBLE");
+  else Serial.println(sats);
+
+  Serial.print("Precision GPS: ");
+  if (hdopRaw == TinyGPS::GPS_INVALID_HDOP) {
+    Serial.println("NO DISPONIBLE");
+  } else {
+    float hdop = hdopRaw / 100.0;
+    Serial.print(calidadHDOP(hdop));
+    Serial.print(" (HDOP: ");
+    Serial.print(hdop, 2);
+    Serial.println(")");
+  }
+
+  Serial.print("Altitud: ");
+  if (alt == TinyGPS::GPS_INVALID_F_ALTITUDE) {
+    Serial.println("NO DISPONIBLE");
+  } else {
+    Serial.print(alt, 1);
+    Serial.println(" m");
+  }
+
+  Serial.print("Velocidad: ");
+  if (speed == TinyGPS::GPS_INVALID_F_SPEED) {
+    Serial.println("NO DISPONIBLE");
+  } else {
+    Serial.print(speed, 2);
+    Serial.println(" km/h");
+  }
+
+  Serial.print("Curso: ");
+  if (speed != TinyGPS::GPS_INVALID_F_SPEED && speed > 2.0 &&
+      course != TinyGPS::GPS_INVALID_F_ANGLE) {
+    Serial.print(course, 1);
+    Serial.println(" grados");
+  } else {
+    Serial.println("Sin movimiento suficiente");
+  }
+
+  Serial.print("Fecha Colombia: ");
+  Serial.println(fechaColombia(day, month, year, hour));
+
+  Serial.print("Hora Colombia: ");
+  Serial.println(horaColombia(hour, minute, second));
+
+  Serial.print("Ciudad: ");
+  Serial.println(ciudad);
+
+  Serial.print("Departamento: ");
+  Serial.println(departamento);
+
+  Serial.print("Pais: ");
+  Serial.println(pais);
+
+  Serial.print("Tiempo restante: ");
+  unsigned long restante = (sessionDurationMs - (millis() - sessionStart)) / 1000;
+  Serial.print(restante);
+  Serial.println(" s");
+
+  Serial.println("------------------------------");
+}
+
+void acumularResumen() {
+  float lat, lon;
+  unsigned long age;
+  gps.f_get_position(&lat, &lon, &age);
+
+  int sats = gps.satellites();
+  int hdopRaw = gps.hdop();
+  float alt = gps.f_altitude();
+  float speed = gps.f_speed_kmph();
+
+  bool posicionValida =
+    (lat != TinyGPS::GPS_INVALID_F_ANGLE) &&
+    (lon != TinyGPS::GPS_INVALID_F_ANGLE) &&
+    (age != TinyGPS::GPS_INVALID_AGE);
+
+  if (posicionValida) {
+    muestrasValidas++;
+
+    if (tienePuntoPrevio) {
+      distanciaTotalKm += distanciaKm(prevLat, prevLon, lat, lon);
+    }
+
+    prevLat = lat;
+    prevLon = lon;
+    tienePuntoPrevio = true;
+  }
+
+  if (speed != TinyGPS::GPS_INVALID_F_SPEED) {
+    sumaVelocidad += speed;
+    muestrasVelocidad++;
+    if (speed > velocidadMax) velocidadMax = speed;
+  }
+
+  if (alt != TinyGPS::GPS_INVALID_F_ALTITUDE) {
+    sumaAltitud += alt;
+    muestrasAltitud++;
+    if (alt < altitudMin) altitudMin = alt;
+    if (alt > altitudMax) altitudMax = alt;
+  }
+
+  if (hdopRaw != TinyGPS::GPS_INVALID_HDOP) {
+    sumaHDOP += (hdopRaw / 100.0);
+    muestrasHDOP++;
+  }
+
+  if (sats != TinyGPS::GPS_INVALID_SATELLITES) {
+    sumaSatelites += sats;
+    muestrasSatelites++;
+  }
+}
+
+void mostrarResumenFinal() {
+  float velocidadProm = (muestrasVelocidad > 0) ? (sumaVelocidad / muestrasVelocidad) : 0.0;
+  float altitudProm = (muestrasAltitud > 0) ? (sumaAltitud / muestrasAltitud) : 0.0;
+  float hdopProm = (muestrasHDOP > 0) ? (sumaHDOP / muestrasHDOP) : 0.0;
+  float satsProm = (muestrasSatelites > 0) ? ((float)sumaSatelites / muestrasSatelites) : 0.0;
+
+  Serial.println("===== RESUMEN FINAL =====");
+  Serial.print("Duracion sesion: ");
+  Serial.print(sessionDurationMs / 60000.0, 1);
+  Serial.println(" min");
+
+  Serial.print("Ciudad: ");
+  Serial.println(ciudad);
+
+  Serial.print("Departamento: ");
+  Serial.println(departamento);
+
+  Serial.print("Pais: ");
+  Serial.println(pais);
+
+  Serial.print("Muestras validas: ");
+  Serial.println(muestrasValidas);
+
+  Serial.print("Distancia aproximada: ");
+  Serial.print(distanciaTotalKm, 3);
+  Serial.println(" km");
+
+  Serial.print("Velocidad promedio: ");
+  Serial.print(velocidadProm, 2);
+  Serial.println(" km/h");
+
+  Serial.print("Velocidad maxima: ");
+  Serial.print(velocidadMax, 2);
+  Serial.println(" km/h");
+
+  Serial.print("Altitud promedio: ");
+  if (muestrasAltitud > 0) {
+    Serial.print(altitudProm, 1);
+    Serial.println(" m");
+  } else {
+    Serial.println("NO DISPONIBLE");
+  }
+
+  Serial.print("Altitud minima: ");
+  if (muestrasAltitud > 0) {
+    Serial.print(altitudMin, 1);
+    Serial.println(" m");
+  } else {
+    Serial.println("NO DISPONIBLE");
+  }
+
+  Serial.print("Altitud maxima: ");
+  if (muestrasAltitud > 0) {
+    Serial.print(altitudMax, 1);
+    Serial.println(" m");
+  } else {
+    Serial.println("NO DISPONIBLE");
+  }
+
+  Serial.print("Precision GPS promedio: ");
+  if (muestrasHDOP > 0) {
+    Serial.print(calidadHDOP(hdopProm));
+    Serial.print(" (HDOP: ");
+    Serial.print(hdopProm, 2);
+    Serial.println(")");
+  } else {
+    Serial.println("NO DISPONIBLE");
+  }
+
+  Serial.print("Satelites promedio: ");
+  if (muestrasSatelites > 0) {
+    Serial.println(satsProm, 1);
+  } else {
+    Serial.println("NO DISPONIBLE");
+  }
+
+  Serial.println("=========================");
+}
+
+const char* calidadHDOP(float hdop) {
+  if (hdop <= 1.5) return "Excelente";
+  if (hdop <= 3.0) return "Buena";
+  if (hdop <= 5.0) return "Regular";
+  return "Mala";
+}
+
+String horaColombia(int utcHour, int minute, int second) {
+  if (utcHour < 0 || utcHour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) {
+    return "NO DISPONIBLE";
+  }
+
+  int colHour = utcHour - 5;
+  if (colHour < 0) colHour += 24;
+
+  char buffer[16];
+  snprintf(buffer, sizeof(buffer), "%02d:%02d:%02d", colHour, minute, second);
+  return String(buffer);
+}
+
+String fechaColombia(int day, int month, int year, int utcHour) {
+  if (year < 2000 || month < 1 || month > 12 || day < 1 || day > 31 || utcHour < 0 || utcHour > 23) {
+    return "NO DISPONIBLE";
+  }
+
+  int d = day;
+  int m = month;
+  int y = year;
+
+  if (utcHour < 5) {
+    d--;
+    if (d < 1) {
+      m--;
+      if (m < 1) {
+        m = 12;
+        y--;
+      }
+      d = diasEnMes(m, y);
+    }
+  }
+
+  char buffer[16];
+  snprintf(buffer, sizeof(buffer), "%02d/%02d/%04d", d, m, y);
+  return String(buffer);
+}
+
+int diasEnMes(int month, int year) {
+  switch (month) {
+    case 1: case 3: case 5: case 7: case 8: case 10: case 12: return 31;
+    case 4: case 6: case 9: case 11: return 30;
+    case 2:
+      if ((year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)) return 29;
+      return 28;
+    default: return 30;
+  }
+}
+
+float distanciaKm(float lat1, float lon1, float lat2, float lon2) {
+  const float R = 6371.0;
+  float dLat = radians(lat2 - lat1);
+  float dLon = radians(lon2 - lon1);
+
+  float a = sin(dLat / 2) * sin(dLat / 2) +
+            cos(radians(lat1)) * cos(radians(lat2)) *
+            sin(dLon / 2) * sin(dLon / 2);
+
+  float c = 2 * atan2(sqrt(a), sqrt(1 - a));
+  return R * c;
+}
+
+void obtenerUbicacion(float lat, float lon) {
+  HTTPClient http;
+
+  String url = "https://nominatim.openstreetmap.org/reverse?format=jsonv2&addressdetails=1&accept-language=es&lat=";
+  url += String(lat, 6);
+  url += "&lon=";
+  url += String(lon, 6);
+
+  http.begin(url);
+  http.setUserAgent("ESP32-GPS-Tracker/1.0 (educational project)");
+
+  int httpCode = http.GET();
+
+  if (httpCode > 0) {
+    String payload = http.getString();
+
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, payload);
+
+    if (!error) {
+      JsonObject address = doc["address"];
+
+      ciudad = "No disponible";
+      if (!address["city"].isNull()) ciudad = String((const char*)address["city"]);
+      else if (!address["town"].isNull()) ciudad = String((const char*)address["town"]);
+      else if (!address["village"].isNull()) ciudad = String((const char*)address["village"]);
+      else if (!address["municipality"].isNull()) ciudad = String((const char*)address["municipality"]);
+      else if (!address["county"].isNull()) ciudad = String((const char*)address["county"]);
+
+      departamento = "No disponible";
+      if (!address["state"].isNull()) departamento = String((const char*)address["state"]);
+
+      pais = "No disponible";
+      if (!address["country"].isNull()) pais = String((const char*)address["country"]);
+    } else {
+      Serial.print("Error parseando JSON: ");
+      Serial.println(error.c_str());
+    }
+  } else {
+    Serial.print("Error HTTP: ");
+    Serial.println(httpCode);
+  }
+
+  http.end();
+}
